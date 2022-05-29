@@ -1,0 +1,69 @@
+service: api-gateway-auth
+frameworkVersion: '2'
+
+custom:
+  stage: ${opt:stage, 'dev'}
+  serviceFullName: "${self:service}-${self:custom.stage}"
+
+provider:
+  name: aws
+  runtime: python3.9
+  lambdaHashingVersion: 20201221
+  versionFunctions: false
+  deploymentBucket:
+    blockPublicAccess: true
+    serverSideEncryption: aws:kms
+  region: us-west-2
+  environment:
+    LOG_LEVEL: INFO
+    SECRETS_MANAGER_PATH: "${self:custom.serviceFullName}"
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - "secretsmanager:GetSecretValue"
+      Resource:
+        - 'Fn::Join':
+          - ':'
+          - - 'arn:aws:secretsmanager'
+            - Ref: 'AWS::Region'
+            - Ref: 'AWS::AccountId'
+            - 'secret:${self:custom.serviceFullName}/*'
+
+functions:
+  authenticate:
+    handler: authenticate.do
+    memorySize: 256
+    timeout: 30
+    reservedConcurrency: 10
+    tags:
+      Environment: ${self:custom.stage}
+      Service: ${self:service}
+
+resources:
+  Resources:
+    authenticateApiGatewayInvokeRole:
+      DependsOn:
+        - AuthenticateLambdaFunction
+      Type: AWS::IAM::Role
+      Properties:
+        RoleName: "${self:custom.serviceFullName}-invoke"
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - apigateway.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: "${self:custom.serviceFullName}-invoke"
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - lambda:InvokeFunction
+                  Resource:
+                    - 'Fn::GetAtt':
+                      - AuthenticateLambdaFunction
+                      - Arn
